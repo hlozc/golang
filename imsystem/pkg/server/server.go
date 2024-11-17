@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 )
 
@@ -30,6 +31,50 @@ func NewServer(ip string, port int) *Server {
 		Messages:  make(chan string),
 	}
 	return svr
+}
+
+func (s *Server) addUser(user *User) {
+	s.mapLock.Lock()
+	s.onlineMap[user.Name] = user
+	s.mapLock.Unlock()
+}
+
+func (s *Server) delUser(user *User) {
+	s.mapLock.Lock()
+	delete(s.onlineMap, user.Name)
+	s.mapLock.Unlock()
+}
+
+// 展示所有在线的玩家姓名
+func (s *Server) showOnlines() (onlines string) {
+	id := 1
+	s.mapLock.Lock()
+	for name := range s.onlineMap {
+		line := strconv.Itoa(id) + ") " + name + "\r\n"
+		onlines = onlines + line
+		id++
+	}
+	s.mapLock.Unlock()
+
+	return
+}
+
+func (s *Server) updateName(user *User, name string) (msg string) {
+	s.mapLock.Lock()
+	if _, exists := s.onlineMap[name]; exists {
+		msg = "given name exists, try others\r\n"
+		s.mapLock.Unlock()
+		return
+	}
+
+	delete(s.onlineMap, user.Name)
+	s.onlineMap[name] = user
+	user.Name = name
+	msg = "success!\r\n"
+
+	s.mapLock.Unlock()
+
+	return
 }
 
 // 需要广播的消息，放在 Messages 里面，后续交给协程处理
@@ -61,7 +106,7 @@ func (s *Server) listenConn(user *User, conn net.Conn) {
 		n, err := conn.Read(buffer)
 		// 说明对方关闭连接了
 		if n == 0 {
-			s.broatcast(user, "offline")
+			user.offline()
 			return
 		}
 
@@ -76,11 +121,12 @@ func (s *Server) listenConn(user *User, conn net.Conn) {
 		if msg[n-1] == '\n' {
 			msg = msg[:n-1]
 		}
-		if n > 2 && msg[n-1] == '\r' {
-			msg = msg[:n-1]
+		if n > 2 && msg[n-2] == '\r' {
+			msg = msg[:n-2]
 		}
 
-		s.broatcast(user, msg)
+		// 读取完用户的消息了，开始处理后续逻辑
+		user.handleMessage(msg)
 	}
 }
 
@@ -88,15 +134,8 @@ func (s *Server) listenConn(user *User, conn net.Conn) {
 // 其实做的事情就是：新连接到来了，为他做准备工具，然后广播其他用户，现在有一个新用户上线了
 // 随后进入 select 准备随时处理该连接后续的所有操作
 func (s *Server) handle(conn net.Conn) {
-	user := NewUser(conn)
-
-	// New User Online, put the msg in channel
-	s.mapLock.Lock()
-	s.onlineMap[user.Name] = user
-	s.mapLock.Unlock()
-
-	// 通知其他用户现在有新用户上线了
-	s.broatcast(user, "online")
+	user := NewUser(s, conn)
+	user.online()
 
 	// 还要监听这个新连接是否有数据到来
 	go s.listenConn(user, conn)
