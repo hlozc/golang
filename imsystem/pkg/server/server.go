@@ -11,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Server struct {
@@ -77,6 +78,23 @@ func (s *Server) updateName(user *User, name string) (msg string) {
 	return
 }
 
+// 当前 user 给 otherSide 用户发送 content 消息
+func (s *Server) privateChat(user *User, otherSide string, content string) (msg string) {
+	// 先判断这个用户在不在
+	s.mapLock.Lock()
+	if _, exists := s.onlineMap[otherSide]; !exists {
+		msg = "remote user not online"
+		s.mapLock.Unlock()
+		return
+	}
+
+	s.onlineMap[otherSide].sendMsg("[" + user.Name + "]: " + content + "\r\n")
+	s.mapLock.Unlock()
+
+	msg = "success!\r\n"
+	return
+}
+
 // 需要广播的消息，放在 Messages 里面，后续交给协程处理
 func (s *Server) broatcast(user *User, msg string) {
 	msg = fmt.Sprintf("[user: %v] %v", user.Name, msg)
@@ -100,7 +118,7 @@ func (s *Server) listenMessages() {
 }
 
 // 监听这个连接是否有发送数据过来
-func (s *Server) listenConn(user *User, conn net.Conn) {
+func (s *Server) listenConn(user *User, conn net.Conn, keepAlive chan bool) {
 	buffer := make([]byte, 4096)
 	for {
 		n, err := conn.Read(buffer)
@@ -125,22 +143,45 @@ func (s *Server) listenConn(user *User, conn net.Conn) {
 			msg = msg[:n-2]
 		}
 
-		// 读取完用户的消息了，开始处理后续逻辑
+		// 读取完用户的消息了，开始处理后续逻辑，
 		user.handleMessage(msg)
+		keepAlive <- true
 	}
+}
+
+// 连接超时，将这个用户连接关闭
+func (s *Server) connTimeout(user *User, keepAlive chan bool) {
+	user.sendMsg("connection timeout, bye")
+
+	close(keepAlive)
+	user.conn.Close()
 }
 
 // 处理该连接的所有事件
 // 其实做的事情就是：新连接到来了，为他做准备工具，然后广播其他用户，现在有一个新用户上线了
 // 随后进入 select 准备随时处理该连接后续的所有操作
 func (s *Server) handle(conn net.Conn) {
+	// 添加一个新用户，并上线
 	user := NewUser(s, conn)
 	user.online()
 
 	// 还要监听这个新连接是否有数据到来
-	go s.listenConn(user, conn)
+	keepAlive := make(chan bool)
+	go s.listenConn(user, conn, keepAlive)
 
-	select {}
+	// 添加定时器功能
+	for {
+		select {
+		// keepAlive 如果有读事件就绪，说明这个连接还是活跃的，那么就可以进入这里的代码，从而跳出 select，忽略这个定时器
+		case <-keepAlive:
+
+		// 表示 5 秒之后这个管道会就绪，本质 time.After 就是一个管道
+		// 开始监听这个管道，5 秒之后就会发生读事件
+		case <-time.After(160 * time.Second):
+			s.connTimeout(user, keepAlive)
+			return
+		}
+	}
 }
 
 func (s *Server) Run() {

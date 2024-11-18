@@ -68,15 +68,40 @@ func (u *User) offline() {
 	u.svr.broatcast(u, "offline")
 }
 
+// 查询所有在线用户
+func (u *User) handleWho() {
+	msg := u.svr.showOnlines()
+	u.sendMsg(msg)
+}
+
+// 处理 改名
+func (u *User) handleRename(msg string) {
+	name := strings.Split(msg, "|")[1]
+	res := u.svr.updateName(u, name)
+	u.sendMsg(res)
+}
+
+// 处理私聊
+func (u *User) handleTo(msg string) {
+	tokens := strings.Split(msg, "|")
+	if len(tokens) != 3 || tokens[2] == "" {
+		u.sendMsg("Cmd Invalid, eg \"to|user|hello\"")
+		return
+	}
+
+	otherSide, content := tokens[1], tokens[2]
+	res := u.svr.privateChat(u, otherSide, content)
+	u.sendMsg(res)
+}
+
 // 收到用户的消息之后，所做的事情
 func (u *User) handleMessage(msg string) {
 	if msg == "who" {
-		msg := u.svr.showOnlines()
-		u.sendMsg(msg)
+		u.handleWho()
 	} else if len(msg) > 7 && msg[:7] == "rename|" {
-		name := strings.Split(msg, "|")[1]
-		res := u.svr.updateName(u, name)
-		u.sendMsg(res)
+		u.handleRename(msg)
+	} else if len(msg) > 3 && msg[:3] == "to|" {
+		u.handleTo(msg)
 	} else {
 		u.svr.broatcast(u, msg)
 	}
