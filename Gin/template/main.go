@@ -32,8 +32,8 @@ func Interrupter() gin.HandlerFunc {
 func main() {
 	r := gin.Default()
 
-	// 可以在这里加入页面的图标
-	// r.Use()
+	// 这里添加全局中间件
+	r.Use()
 	// 加载静态页面
 	r.LoadHTMLGlob("../tpl/*")
 	// 加载静态资源
@@ -96,6 +96,26 @@ func main() {
 	r.GET("/user/info", Interrupter(), func(c *gin.Context) {
 		if _, ok := c.MustGet("usersession").(string); ok {
 			fmt.Println("拦截器拦截到的值")
+		}
+	})
+
+	// 文件上传类问题
+	r.POST("upload", func(c *gin.Context) {
+		// 从请求和 前端 字段中获取这个文件
+		f, _ := c.FormFile("f1")
+		// 保存文件
+		c.SaveUploadedFile(f, "./")
+	})
+
+	// 多个文件的保存类问题
+	r.POST("/uploads", func(c *gin.Context) {
+		// 获取解析之后的表单
+		form, _ := c.MultipartForm()
+		// 获取 form 表单里面的文件对象
+		files := form.File["file"]
+
+		for _, file := range files {
+			c.SaveUploadedFile(file, "./")
 		}
 	})
 
